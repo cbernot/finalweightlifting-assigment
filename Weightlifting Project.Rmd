@@ -1,0 +1,128 @@
+---
+title: "Weight Lifting Exercise Dumbell Performance Assignment"
+author: "cgb"
+date: "July 8, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Description
+
+Using data from the WLE dataset*,this assignment goal was to determine how well 6 participants performed barbell lifts using accelerometer data on the belt, forearm, arm, and dumbell of the participants. These participants were asked to perform the lifts correctly and incorrectly(in 4 different ways). To accomplish this we were tasked with developing a prediction model that accurately predicts the manner in which the exercises were performed. The outcome was captured as a classe variable. Classe A was performed correctly, classes B,C,D,E were performed incorrectly in one of four ways. After exploring and cleansing the data, and utilizing random forest model method (with k-fold cross-validation of 10 subsets), I obtained a 99.76% accuracy rate(mtry 27) and a oob rate of just .21% which should be close to my out of sample error. Using this model, I was then able to obtain 100% accuracy on the 20 test observation quiz portion of the assignment.
+
+```{r libraries,message=F,warning=F,results="hide"}
+library(randomForest)
+library(ElemStatLearn)
+library(pgmm)
+library(rpart)
+library(caret)
+library(e1071)
+library(rattle)
+library(rpart.plot)
+```
+
+## Process for Model building
+
+I first needed to download the training and testing data from the har site and read into tables. I then set.seed for reproducibility.
+
+```{r download,message=F,warning=F, results="hide"}
+fileurl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileurl,destfile="./pml-training.csv")
+training<-read.table("./pml-training.csv",sep="," ,header=TRUE)
+fileurl1<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurl1,destfile="./pml-testing.csv")
+testing<-read.table("./pml-testing.csv",sep="," ,header=TRUE)
+set.seed(1111)
+```
+
+I then performed some exploratory data analysis to see what we had.  Understanding that classe was the outcome to be predicted, I reaffirmed the number of unique classes contained in the data, ensured it was a factor variable, and then looked at the other variables noticing many had missing values or NAs.  I determined  that only a small percentage of rows contained all the data and these were tied to the variable new_window with a value of "yes". So I removed these rows and then was able to eliminate the variable columns that contained only na or missing values.
+
+```{r  explore,message=F,warning=F, results="hide"}
+class(training$classe)
+nsv<-nearZeroVar(training, saveMetrics=TRUE)
+nsv
+## gave me list of columns that provided me near zero values
+##determined when new_window == yes then a value was placed in all of these columns so removed
+training2<-training[training$new_window=="no",]
+##then removed columns that were filled with na or blank
+training4<-training2[!sapply(training2, function (x) all(is.na(x) | x == ""))]
+```
+
+I then decided because of the large number of observations to break the training set into a training and validation set since we would be predicting a test set as part of the quiz, I wanted to be able to test my model first using a validation set.
+
+```{r trainingsets, message=F,warning=F,results="hide"}
+##create my training and validation sets
+inTrain = createDataPartition(training4$classe, p = 3/4)[[1]]
+trainingfinal = training4[ inTrain,]
+validat = training4[-inTrain,]
+```
+I then looked at the 60 variables left in the two sets to see if there were more variables I could eliminate.In addition I also checked for missing data with complete.cases.  I looked at the cvtd_timestamp to see if there was a time dependency time frame but found none, so I determined I could eliminate all time variables as well as the user name (since they all did the exact same thing) and x. I then eliminated the same variables in the test set but then discovered it had an additional variable called problem_id not found in the original training set and eliminated that as well.
+
+```{r clean,message=F,warning=F, results="hide"}
+## looked at additional values for inconsequential variables
+tm<-unique(trainingfinal$cvtd_timestamp)
+tm
+qplot(cvtd_timestamp, classe, data=trainingfinal)
+##doesn't appear time has any impact on outcome so will not use variable
+summary(trainingfinal)
+##check for missing values
+sum(complete.cases(trainingfinal))
+##removed inconsequential columns for easier handling
+trainingfinal2<-trainingfinal[,-c(1,2,3,4,5,6)]
+validatfinal<-validat[,-c(1,2,3,4,5,6)]
+##now subset testing data
+testingfinal<-testing[!sapply(testing, function (x) all(is.na(x) | x == ""))]
+testingfinal2<-testingfinal[,-c(1,2,3,4,5,6,60)]
+##remove same variables from testing plus the additional problem id
+
+```
+Because the outcome was a classification and the goal of this assignment was prediction accuracy (and I had a good data set size and a large number of variables) I decided to select random forest as my method to build the model. I used 10 fold cross validation in trainControl as a precaution against overfitting (in addition to the reserved a validation data set).
+
+```{r predict, }
+controlrandom <- trainControl(method="cv", 10)
+modfitrf <- train(classe ~ ., data=trainingfinal2, method="rf", trControl=controlrandom, ntree=250)
+
+modfitrf
+## oob estimate
+modfitrf$finalModel
+
+```
+
+
+I then explored which variables were most important.
+
+```{r varimp}
+##variable importance
+varim <- varImp(modfitrf)
+plot(varImp(modfitrf),top=20)
+```
+
+I then turned to using my validation set to predict against to check accuracy:
+
+```{r predictval}
+##test on validatfinal to cross validate
+predictvalidat <- predict(modfitrf,validatfinal)
+confusionMatrix(validatfinal$classe, predictvalidat)
+```
+
+Then I ran on test set:
+
+```{r predicttest,message=F,warning=F,results="hide"}
+##now run on test data sample of 20
+prediction <- predict(modfitrf, testingfinal2)
+
+```
+##Conclusion
+
+The random forest model produced an extremely accurate model that enabled me to predict the 20 test cases with 100% accuracy.
+
+##Appendix
+
+*Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+Cited by 2 (Google Scholar) 
+
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4mFOy9Wwc
